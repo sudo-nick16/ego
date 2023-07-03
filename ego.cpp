@@ -3,16 +3,22 @@
 #include <exception>
 #include <fstream>
 #include <iostream>
-#include <map>
 #include <sstream>
 #include <string>
 #include <unordered_map>
 #include <vector>
 
-class ParserError : public std::exception {
+class ParseError : public std::exception {
 public:
   std::string error_msg;
-  ParserError(std::string err) : error_msg(err) {}
+  ParseError(std::string err) : error_msg("error while parsing: " + err) {}
+  const char *what() const noexcept override { return error_msg.c_str(); }
+};
+
+class EvalError : public std::exception {
+public:
+  std::string error_msg;
+  EvalError(std::string err) : error_msg("error while evaluating: " + err) {}
   const char *what() const noexcept override { return error_msg.c_str(); }
 };
 
@@ -50,10 +56,21 @@ enum TokenType {
   Eof
 };
 
+enum NodeType {
+  LetNode,
+  AssignmentNode,
+  ReturnNode,
+  IfNode,
+  WhileNode,
+  FunctionNode,
+  BinaryNode,
+};
+
 enum DataType {
   IntType,
   FloatType,
   StringType,
+  BoolType,
 };
 
 class Token {
@@ -71,33 +88,14 @@ public:
   }
 };
 
-bool is_digit(char c) {
-  if (c >= '0' && c <= '9') {
+bool is_token_type_bool(TokenType t) {
+  if (t == True || t == False) {
     return true;
-  } else {
-    return false;
   }
+  return false;
 }
 
-bool is_alpha(char c) {
-  if (c >= 'a' && c <= 'z') {
-    return true;
-  } else if (c >= 'A' && c <= 'Z') {
-    return true;
-  } else {
-    return false;
-  }
-}
-
-bool is_blank(char c) {
-  if (c == ' ' || c == '\t' || c == '\n') {
-    return true;
-  } else {
-    return false;
-  }
-}
-
-static std::map<std::string, TokenType> keywords = {
+static std::unordered_map<std::string, TokenType> keywords = {
     {"let", Let},       {"if", If},     {"else", Else},   {"while", While},
     {"return", Return}, {"true", True}, {"false", False}, {"func", Function}};
 
@@ -266,7 +264,7 @@ bool is_binary_op(TokenType t) {
 
 bool assert(TokenType type, TokenType assert_type) {
   if (type != assert_type) {
-    throw ParserError("assertion failed");
+    throw ParseError("assertion failed");
     return false;
   }
   return true;
@@ -316,6 +314,59 @@ public:
   std::string name;
 };
 
+class Object {
+public:
+  virtual DataType type() = 0;
+  virtual std::string inspect() = 0;
+};
+
+class IntegerObject : public Object {
+public:
+  IntegerObject(int value) : value(value) {}
+  DataType type() { return IntType; }
+  std::string inspect() { return std::to_string(value); }
+  int value;
+};
+
+class FloatObject : public Object {
+public:
+  FloatObject(float value) : value(value) {}
+  DataType type() { return FloatType; }
+  std::string inspect() { return std::to_string(value); }
+  float value;
+};
+
+class StringObject : public Object {
+public:
+  StringObject(std::string value) : value(value) {}
+  DataType type() { return StringType; }
+  std::string inspect() { return value; }
+  std::string value;
+};
+
+class BoolObject : public Object {
+public:
+  BoolObject(bool value) : value(value) {}
+  DataType type() { return BoolType; }
+  std::string inspect() { return std::to_string(value); }
+  bool value;
+};
+
+class Environment {
+public:
+  Environment() {}
+  std::unordered_map<std::string, Object *> store;
+
+  Object *get_identifier(std::string name) {
+    if (store.find(name) != store.end()) {
+      return store[name];
+    }
+    return nullptr;
+  }
+
+  void set_identifier(std::string name, Object *obj) { store[name] = obj; }
+};
+
 class BinaryExpression : public Node {
 public:
   BinaryExpression(Node *left, Node *right, Token op)
@@ -344,6 +395,7 @@ public:
   std::string type = "LetStatement";
   Identifier ident;
   Node *value;
+  Environment *env;
 };
 
 class IfStatement : public Node {
@@ -453,7 +505,7 @@ public:
   Assoc assoc;
 };
 
-static std::map<TokenType, OpInfo> OpInfoMap{
+static std::unordered_map<TokenType, OpInfo> OpInfoMap{
     {Lt, OpInfo{Prec0, Left}},   {Lte, OpInfo{Prec0, Left}},
     {Gt, OpInfo{Prec0, Left}},   {Gte, OpInfo{Prec0, Left}},
     {Plus, OpInfo{Prec1, Left}}, {Minus, OpInfo{Prec1, Left}},
@@ -471,14 +523,14 @@ public:
       advance_token();
       Node *node = parse_expression(Prec0);
       if (curr_token->type != Rparen) {
-        throw ParserError("expected ) while parsing expression");
+        throw ParseError("expected ) while parsing expression");
       }
       advance_token();
       return node;
     } else if (is_binary_op(curr_token->type)) {
-      throw ParserError("unexpected op");
+      throw ParseError("unexpected op");
     } else if (curr_token->type == Eof) {
-      throw ParserError("expression ended unexpectedly");
+      throw ParseError("expression ended unexpectedly");
     } else {
       // std::cout << "parse_primary (got num/ident) = " << *curr_token <<
       // "\n";
@@ -497,7 +549,12 @@ public:
         advance_token();
         return node;
       }
-      throw ParserError(
+      if (is_token_type_bool(curr_token->type)) {
+        Node *node = new Literal(curr_token->literal, BoolType);
+        advance_token();
+        return node;
+      }
+      throw ParseError(
           "invalid token, expected a literal or identifier but got " +
           curr_token->to_string());
     }
@@ -511,7 +568,7 @@ public:
         break;
       }
       if (!is_binary_op(curr_token->type)) {
-        throw ParserError("no binary operator provided.");
+        throw ParseError("no binary operator provided.");
       }
       Token curr_op = *curr_token;
       OpInfo curr_op_info = OpInfoMap[curr_token->type];
@@ -534,13 +591,13 @@ public:
 
   Node *parse_let_statement() {
     if (!is_next(Ident)) {
-      throw ParserError("expected identifier");
+      throw ParseError("expected identifier");
     }
     advance_token();
     std::cout << "curr_token = " << *curr_token << "\n";
     Identifier ident = Identifier(curr_token->literal);
     if (!is_next(Assign)) {
-      throw ParserError("expected assignment operator");
+      throw ParseError("expected assignment operator");
     }
     advance_token();
     advance_token();
@@ -550,34 +607,34 @@ public:
 
   Node *parse_if_statement() {
     if (!is_next(Lparen)) {
-      throw ParserError("expected (");
+      throw ParseError("expected (");
     }
     advance_token();
     std::cout << "if statement curr_token = " << *curr_token << "\n";
     advance_token();
     Node *condition = parse_expression(Prec0);
     if (curr_token->type != Rparen) {
-      throw ParserError("expected )");
+      throw ParseError("expected )");
     }
     if (!is_next(Lbrace)) {
-      throw ParserError("expected {");
+      throw ParseError("expected {");
     }
     advance_token();
     std::vector<Node *> consequent = parse(Rbrace);
     if (curr_token->type != Rbrace) {
-      throw ParserError("expected } in if block");
+      throw ParseError("expected } in if block");
     }
     std::cout << "after consequent = " << *curr_token << "\n";
     std::vector<Node *> alternate;
     if (is_next(Else)) {
       advance_token();
       if (!is_next(Lbrace)) {
-        throw ParserError("expected {");
+        throw ParseError("expected {");
       }
       advance_token();
       alternate = parse(Rbrace);
       if (curr_token->type != Rbrace) {
-        throw ParserError("expected } in else block");
+        throw ParseError("expected } in else block");
       }
     }
     advance_token();
@@ -595,32 +652,32 @@ public:
 
   Node *parse_function_statement() {
     if (!is_next(Ident)) {
-      throw ParserError("expected identifier");
+      throw ParseError("expected identifier");
     }
     advance_token();
     Identifier ident = Identifier(curr_token->literal);
     if (!is_next(Lparen)) {
-      throw ParserError("expected (");
+      throw ParseError("expected (");
     }
     advance_token();
     std::vector<Identifier *> params = {};
     while (curr_token->type != Rparen) {
       if (!is_next(Ident)) {
-        throw ParserError("expected identifier");
+        throw ParseError("expected identifier");
       }
       advance_token();
       params.push_back(new Identifier(curr_token->literal));
       if (!is_next(Comma) && !is_next(Rparen)) {
-        throw ParserError("expected , or )");
+        throw ParseError("expected , or )");
       }
       advance_token();
     }
     if (!is_next(Lbrace)) {
-      throw ParserError("expected {");
+      throw ParseError("expected {");
     }
     std::vector<Node *> block = parse(Rbrace);
     if (curr_token->type != Rbrace) {
-      throw ParserError("expected }");
+      throw ParseError("expected }");
     }
     advance_token();
     FunctionStatement *function_statement =
@@ -644,7 +701,7 @@ public:
       } else if (curr_token->type == Rparen) {
         break;
       } else {
-        throw ParserError("expected , or )");
+        throw ParseError("expected , or )");
       }
     }
     CallExpression *call_expression = new CallExpression(callee, args);
@@ -653,22 +710,22 @@ public:
 
   Node *parse_while_statement() {
     if (!is_next(Lparen)) {
-      throw ParserError("expected (");
+      throw ParseError("expected (");
     }
     advance_token();
     std::cout << "if statement curr_token = " << *curr_token << "\n";
     advance_token();
     Node *condition = parse_expression(Prec0);
     if (curr_token->type != Rparen) {
-      throw ParserError("expected )");
+      throw ParseError("expected )");
     }
     if (!is_next(Lbrace)) {
-      throw ParserError("expected {");
+      throw ParseError("expected {");
     }
     advance_token();
     std::vector<Node *> block = parse(Rbrace);
     if (curr_token->type != Rbrace) {
-      throw ParserError("expected } in while block");
+      throw ParseError("expected } in while block");
     }
     advance_token();
     WhileStatement *while_statement = new WhileStatement(condition, block);
@@ -776,25 +833,211 @@ private:
   int next_idx;
 };
 
-class Environment {
-public:
-  Environment() {}
-  std::unordered_map<std::string *, std::string> store;
-  std::unordered_map<Identifier *, FunctionStatement *> functions;
-};
+Object *get_obj_from_literal(Literal *l) {
+  switch (l->data_type) {
+  case IntType: {
+    return new IntegerObject(stoi(l->value));
+  }
+  case BoolType: {
+    return new BoolObject(l->value == "true");
+  }
+  case FloatType: {
+    return new FloatObject(stof(l->value));
+  }
+  case StringType: {
+    return new StringObject(l->value);
+  }
+  default: {
+    std::cout << "literal : " << l->to_string() << "\n";
+    throw EvalError("unknown literal type" + l->to_string());
+  }
+  }
+  return new StringObject(l->value);
+}
 
-class Evalutor {
+Object *evaluate_operator(Object *left, Object *right, Token op) {
+  if (left->type() != right->type()) {
+    throw EvalError("type mismatch");
+  }
+  if (left->type() == BoolType || right->type() == BoolType) {
+    throw EvalError("cannot use bool with operator");
+  }
+  switch (op.type) {
+  case Plus: {
+    if (left->type() == IntType) {
+      IntegerObject *left_int = (IntegerObject *)left;
+      IntegerObject *right_int = (IntegerObject *)right;
+      return new IntegerObject(left_int->value + right_int->value);
+    } else if (left->type() == FloatType) {
+      FloatObject *left_float = (FloatObject *)left;
+      FloatObject *right_float = (FloatObject *)right;
+      return new FloatObject(left_float->value + right_float->value);
+    } else if (left->type() == StringType) {
+      StringObject *left_string = (StringObject *)left;
+      StringObject *right_string = (StringObject *)right;
+      return new StringObject(left_string->value + right_string->value);
+    } else {
+      throw EvalError("type mismatch");
+    }
+    break;
+  }
+  case Minus: {
+    if (left->type() == IntType) {
+      IntegerObject *left_int = (IntegerObject *)left;
+      IntegerObject *right_int = (IntegerObject *)right;
+      return new IntegerObject(left_int->value - right_int->value);
+    } else if (left->type() == FloatType) {
+      FloatObject *left_float = (FloatObject *)left;
+      FloatObject *right_float = (FloatObject *)right;
+      return new FloatObject(left_float->value - right_float->value);
+    } else if (left->type() == StringType) {
+      throw EvalError("invalid operation on string");
+    } else {
+      throw EvalError("type mismatch");
+    }
+    break;
+  }
+  case Mul: {
+    if (left->type() == IntType) {
+      IntegerObject *left_int = (IntegerObject *)left;
+      IntegerObject *right_int = (IntegerObject *)right;
+      return new IntegerObject(left_int->value * right_int->value);
+    } else if (left->type() == FloatType) {
+      FloatObject *left_float = (FloatObject *)left;
+      FloatObject *right_float = (FloatObject *)right;
+      return new FloatObject(left_float->value * right_float->value);
+    } else if (left->type() == StringType) {
+      throw EvalError("invalid operation on string");
+    } else {
+      throw EvalError("type mismatch");
+    }
+    break;
+  }
+  case Div: {
+    if (left->type() == IntType) {
+      IntegerObject *left_int = (IntegerObject *)left;
+      IntegerObject *right_int = (IntegerObject *)right;
+      return new IntegerObject(left_int->value / right_int->value);
+    } else if (left->type() == FloatType) {
+      FloatObject *left_float = (FloatObject *)left;
+      FloatObject *right_float = (FloatObject *)right;
+      return new FloatObject(left_float->value / right_float->value);
+    } else if (left->type() == StringType) {
+      throw EvalError("invalid operation on string");
+    } else {
+      throw EvalError("type mismatch");
+    }
+    break;
+  }
+  case Equal: {
+    if (left->type() == IntType) {
+      IntegerObject *left_int = (IntegerObject *)left;
+      IntegerObject *right_int = (IntegerObject *)right;
+      return new BoolObject(left_int->value == right_int->value);
+    } else if (left->type() == FloatType) {
+      FloatObject *left_float = (FloatObject *)left;
+      FloatObject *right_float = (FloatObject *)right;
+      return new BoolObject(left_float->value == right_float->value);
+    } else if (left->type() == StringType) {
+      throw EvalError("invalid operation on string");
+    } else {
+      throw EvalError("type mismatch");
+    }
+    break;
+  }
+  case NotEqual: {
+    if (left->type() == IntType) {
+      IntegerObject *left_int = (IntegerObject *)left;
+      IntegerObject *right_int = (IntegerObject *)right;
+      return new BoolObject(left_int->value != right_int->value);
+    } else if (left->type() == FloatType) {
+      FloatObject *left_float = (FloatObject *)left;
+      FloatObject *right_float = (FloatObject *)right;
+      return new BoolObject(left_float->value != right_float->value);
+    } else if (left->type() == StringType) {
+      throw EvalError("invalid operation on string");
+    } else {
+      throw EvalError("type mismatch");
+    }
+    break;
+  }
+  case Lt: {
+    if (left->type() == IntType) {
+      IntegerObject *left_int = (IntegerObject *)left;
+      IntegerObject *right_int = (IntegerObject *)right;
+      return new BoolObject(left_int->value < right_int->value);
+    } else if (left->type() == FloatType) {
+      FloatObject *left_float = (FloatObject *)left;
+      FloatObject *right_float = (FloatObject *)right;
+      return new BoolObject(left_float->value < right_float->value);
+    } else if (left->type() == StringType) {
+      throw EvalError("invalid operation on string");
+    } else {
+      throw EvalError("type mismatch");
+    }
+    break;
+  }
+  case Gt: {
+    // TODO: find a short way to do this, maybe use define?
+    break;
+  }
+  default:
+    throw EvalError("invalid expression");
+  }
+  return nullptr;
+}
+
+Object *evaluate_expression(Node *node, Environment *env) {
+  if (node->statement_type() == "BinaryExpression") {
+    BinaryExpression *bNode = (BinaryExpression *)node;
+    Object *left = evaluate_expression(bNode->left, env);
+    Object *right = evaluate_expression(bNode->right, env);
+    return evaluate_operator(left, right, bNode->op);
+  } else if (node->statement_type() == "Literal") {
+    return get_obj_from_literal((Literal *)node);
+  } else if (node->statement_type() == "Identifier") {
+    Object *obj = env->get_identifier(((Identifier *)node)->name);
+    if (obj == nullptr) {
+      throw EvalError("undefined identifier");
+    }
+    return obj;
+  }
+  throw EvalError("invalid initialization value");
+  return nullptr;
+}
+
+class Evaluator {
 public:
-  Evalutor(std::vector<Node *> program) : program(program) {
+  Evaluator(std::vector<Node *> &program) : program(program) {
     global_env = new Environment();
   }
+
   void evaluate(Environment *env) {
     for (auto node : program) {
       std::string type = node->statement_type();
       if (type == "LetStatement") {
         LetStatement *letNode = (LetStatement *)node;
-        env->store.find();
+        std::string name = letNode->ident.name;
+        if (env->store.find(name) != env->store.end()) {
+          throw EvalError("variable already defined");
+        }
+        Object *obj = evaluate_expression(letNode->value, env);
+        env->store[name] = obj;
+      } else if (type == "AssignmentExpression") {
+        AssignmentExpression *assNode = (AssignmentExpression *)node;
+        std::string name = assNode->ident.name;
+        if (env->store.find(name) == env->store.end()) {
+          throw EvalError("variable not defined");
+        }
+        Object *obj = evaluate_expression(assNode->value, env);
+        env->store[name] = obj;
+      } else if (type == "IfStatement") {
       }
+    }
+
+    std::cout << "-----\n";
+    for (auto ele : env->store) {
+      std::cout << ele.first << " -> " << ele.second->inspect() << "\n";
     }
   }
   Environment *global_env;
@@ -816,7 +1059,11 @@ int main() {
 
     std::vector<Node *> program = parser.parse(Eof);
 
+    Evaluator evaluator = Evaluator(program);
+    Environment *global_env = new Environment();
+
     std::cout << nodes_to_str(program) << std::endl;
+    evaluator.evaluate(global_env);
 
     std::ofstream out("test/test_ast.json");
     if (!out.is_open()) {
