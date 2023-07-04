@@ -1,6 +1,12 @@
 build:
-	g++ -std=c++20 -o bin/ego ego.cpp
+	g++ -std=c++20 -o bin/ego ego.cpp -lraylib 
 
-run: build
+all: build
 	./bin/ego
+
+run:
+	./bin/ego
+
+clean:
+	rm -rf bin/ego
 

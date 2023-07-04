@@ -1,8 +1,11 @@
 #include <cctype>
 #include <cerrno>
+#include <cstdlib>
 #include <exception>
 #include <fstream>
+#include <functional>
 #include <iostream>
+#include <raylib.h>
 #include <sstream>
 #include <string>
 #include <unordered_map>
@@ -131,6 +134,19 @@ public:
         break;
       }
       case '-': {
+        if (isdigit(peek_char())) {
+          std::string number;
+          int dot_count = 0;
+          number += source[pos];
+          read_char();
+          while ((isdigit(source[pos]) || source[pos] == '.') &&
+                 dot_count < 2) {
+            number += source[pos];
+            read_char();
+          }
+          tokens.push_back(Token{Number, number});
+          break;
+        }
         tokens.push_back(Token{Minus, "-"});
         break;
       }
@@ -216,7 +232,9 @@ public:
       default: {
         if (isdigit(source[pos])) {
           std::string number;
-          while (isdigit(source[pos])) {
+          int dot_count = 0;
+          while ((isdigit(source[pos]) || source[pos] == '.') &&
+                 dot_count < 2) {
             number += source[pos];
             read_char();
           }
@@ -224,7 +242,7 @@ public:
           continue;
         } else if (isalpha(source[pos])) {
           std::string identifier;
-          while (isalpha(source[pos])) {
+          while (isalpha(source[pos]) || source[pos] == '_') {
             identifier += source[pos];
             read_char();
           }
@@ -256,7 +274,7 @@ private:
 
 bool is_binary_op(TokenType t) {
   if (t == Plus || t == Minus || t == Div || t == Mul || t == Pow || t == Lt ||
-      t == Gt || t == Lte || t == Gte || t == Equal) {
+      t == Gt || t == Lte || t == Gte || t == Equal || t == NotEqual) {
     return true;
   }
   return false;
@@ -318,6 +336,7 @@ class Object {
 public:
   virtual DataType type() = 0;
   virtual std::string inspect() = 0;
+  virtual bool is_truthy() = 0;
 };
 
 class IntegerObject : public Object {
@@ -325,6 +344,7 @@ public:
   IntegerObject(int value) : value(value) {}
   DataType type() { return IntType; }
   std::string inspect() { return std::to_string(value); }
+  bool is_truthy() { return value != 0; }
   int value;
 };
 
@@ -333,6 +353,7 @@ public:
   FloatObject(float value) : value(value) {}
   DataType type() { return FloatType; }
   std::string inspect() { return std::to_string(value); }
+  bool is_truthy() { return value != 0; }
   float value;
 };
 
@@ -341,6 +362,7 @@ public:
   StringObject(std::string value) : value(value) {}
   DataType type() { return StringType; }
   std::string inspect() { return value; }
+  bool is_truthy() { return value != ""; }
   std::string value;
 };
 
@@ -349,13 +371,23 @@ public:
   BoolObject(bool value) : value(value) {}
   DataType type() { return BoolType; }
   std::string inspect() { return std::to_string(value); }
+  bool is_truthy() { return value; }
   bool value;
+};
+
+class FunctionObject {
+public:
+  FunctionObject(std::vector<Node *> &body, std::vector<std::string> &params)
+      : body(body), params(params) {}
+  std::vector<std::string> params;
+  std::vector<Node *> body;
 };
 
 class Environment {
 public:
   Environment() {}
   std::unordered_map<std::string, Object *> store;
+  std::unordered_map<std::string, FunctionObject *> functions;
 
   Object *get_identifier(std::string name) {
     if (store.find(name) != store.end()) {
@@ -515,63 +547,71 @@ static std::unordered_map<TokenType, OpInfo> OpInfoMap{
 
 class Parser {
 public:
-  Parser(std::vector<Token> *tokens) : tokens(tokens) { advance_token(); };
+  Parser(std::vector<Token> toks) {
+    this->tokens = toks;
+    advance_token();
+  };
 
   Node *parse_primary() {
-    // std::cout << "parse_primary = " << *curr_token << "\n";
-    if (curr_token->type == Lparen) {
+    if (curr_token.type == Lparen) {
       advance_token();
       Node *node = parse_expression(Prec0);
-      if (curr_token->type != Rparen) {
+      if (curr_token.type != Rparen) {
         throw ParseError("expected ) while parsing expression");
       }
       advance_token();
       return node;
-    } else if (is_binary_op(curr_token->type)) {
+    } else if (is_binary_op(curr_token.type)) {
       throw ParseError("unexpected op");
-    } else if (curr_token->type == Eof) {
+    } else if (curr_token.type == Eof) {
       throw ParseError("expression ended unexpectedly");
     } else {
-      // std::cout << "parse_primary (got num/ident) = " << *curr_token <<
-      // "\n";
-      if (curr_token->type == Number) {
-        Node *node = new Literal(curr_token->literal, IntType);
+      if (curr_token.type == Number) {
+        if (curr_token.literal.find('.') != std::string::npos) {
+          Node *node = new Literal(curr_token.literal, FloatType);
+          advance_token();
+          return node;
+        }
+        Node *node = new Literal(curr_token.literal, IntType);
         advance_token();
         return node;
       };
-      if (curr_token->type == Ident) {
-        Node *node = new Identifier(curr_token->literal);
+      if (curr_token.type == Ident) {
+        if (is_next(Lparen)) {
+          return parse_call_expression();
+        }
+        Node *node = new Identifier(curr_token.literal);
         advance_token();
         return node;
       }
-      if (curr_token->type == String) {
-        Node *node = new Literal(curr_token->literal, StringType);
+      if (curr_token.type == String) {
+        Node *node = new Literal(curr_token.literal, StringType);
         advance_token();
         return node;
       }
-      if (is_token_type_bool(curr_token->type)) {
-        Node *node = new Literal(curr_token->literal, BoolType);
+      if (is_token_type_bool(curr_token.type)) {
+        Node *node = new Literal(curr_token.literal, BoolType);
         advance_token();
         return node;
       }
       throw ParseError(
           "invalid token, expected a literal or identifier but got " +
-          curr_token->to_string());
+          curr_token.to_string());
     }
   }
 
   Node *parse_expression(int min_prec) {
     Node *left = parse_primary();
     while (true) {
-      if (curr_token->type == Eof || !is_binary_op(curr_token->type) ||
-          OpInfoMap[curr_token->type].prec < min_prec) {
+      if (curr_token.type == Eof || !is_binary_op(curr_token.type) ||
+          OpInfoMap[curr_token.type].prec < min_prec) {
         break;
       }
-      if (!is_binary_op(curr_token->type)) {
+      if (!is_binary_op(curr_token.type)) {
         throw ParseError("no binary operator provided.");
       }
-      Token curr_op = *curr_token;
-      OpInfo curr_op_info = OpInfoMap[curr_token->type];
+      Token curr_op = curr_token;
+      OpInfo curr_op_info = OpInfoMap[curr_token.type];
       int next_min_prec = curr_op_info.assoc == Left ? curr_op_info.prec + 1
                                                      : curr_op_info.prec;
       advance_token();
@@ -594,8 +634,8 @@ public:
       throw ParseError("expected identifier");
     }
     advance_token();
-    std::cout << "curr_token = " << *curr_token << "\n";
-    Identifier ident = Identifier(curr_token->literal);
+    // std::cout << "curr_token = " << *curr_token << "\n";
+    Identifier ident = Identifier(curr_token.literal);
     if (!is_next(Assign)) {
       throw ParseError("expected assignment operator");
     }
@@ -607,24 +647,24 @@ public:
 
   Node *parse_if_statement() {
     if (!is_next(Lparen)) {
-      throw ParseError("expected (");
+      throw ParseError("expected ( while parsing if condition");
     }
     advance_token();
-    std::cout << "if statement curr_token = " << *curr_token << "\n";
+    // std::cout << "if statement curr_token = " << *curr_token << "\n";
     advance_token();
     Node *condition = parse_expression(Prec0);
-    if (curr_token->type != Rparen) {
-      throw ParseError("expected )");
+    if (curr_token.type != Rparen) {
+      throw ParseError("expected ) while parsing if condition");
     }
     if (!is_next(Lbrace)) {
-      throw ParseError("expected {");
+      throw ParseError("expected { while parsing if condition");
     }
     advance_token();
     std::vector<Node *> consequent = parse(Rbrace);
-    if (curr_token->type != Rbrace) {
+    if (curr_token.type != Rbrace) {
       throw ParseError("expected } in if block");
     }
-    std::cout << "after consequent = " << *curr_token << "\n";
+    // std::cout << "after consequent = " << *curr_token << "\n";
     std::vector<Node *> alternate;
     if (is_next(Else)) {
       advance_token();
@@ -633,7 +673,7 @@ public:
       }
       advance_token();
       alternate = parse(Rbrace);
-      if (curr_token->type != Rbrace) {
+      if (curr_token.type != Rbrace) {
         throw ParseError("expected } in else block");
       }
     }
@@ -652,21 +692,26 @@ public:
 
   Node *parse_function_statement() {
     if (!is_next(Ident)) {
-      throw ParseError("expected identifier");
+      throw ParseError("missing function name");
     }
     advance_token();
-    Identifier ident = Identifier(curr_token->literal);
+    Identifier ident = Identifier(curr_token.literal);
     if (!is_next(Lparen)) {
       throw ParseError("expected (");
     }
     advance_token();
+    // std::cout << "curr_token in function satement after Lparen ( = "
+    //           << *curr_token << "\n";
     std::vector<Identifier *> params = {};
-    while (curr_token->type != Rparen) {
+    if (is_next(Rparen)) {
+      advance_token();
+    }
+    while (curr_token.type != Rparen) {
       if (!is_next(Ident)) {
         throw ParseError("expected identifier");
       }
       advance_token();
-      params.push_back(new Identifier(curr_token->literal));
+      params.push_back(new Identifier(curr_token.literal));
       if (!is_next(Comma) && !is_next(Rparen)) {
         throw ParseError("expected , or )");
       }
@@ -676,7 +721,7 @@ public:
       throw ParseError("expected {");
     }
     std::vector<Node *> block = parse(Rbrace);
-    if (curr_token->type != Rbrace) {
+    if (curr_token.type != Rbrace) {
       throw ParseError("expected }");
     }
     advance_token();
@@ -687,23 +732,22 @@ public:
   }
 
   Node *parse_call_expression() {
-    Identifier callee = Identifier(curr_token->literal);
+    Identifier callee = Identifier(curr_token.literal);
     advance_token();
     advance_token();
-    std::cout << "curr_token call exprssion = " << *curr_token << "\n";
     std::vector<Node *> args = {};
-    while (curr_token->type != Rparen) {
+    while (curr_token.type != Rparen) {
       Node *arg = parse_expression(Prec0);
-      // std::cout << "arg = " << arg->to_string() << "\n";
       args.push_back(arg);
-      if (curr_token->type == Comma) {
+      if (curr_token.type == Comma) {
         advance_token();
-      } else if (curr_token->type == Rparen) {
+      } else if (curr_token.type == Rparen) {
         break;
       } else {
         throw ParseError("expected , or )");
       }
     }
+    advance_token();
     CallExpression *call_expression = new CallExpression(callee, args);
     return call_expression;
   }
@@ -713,18 +757,18 @@ public:
       throw ParseError("expected (");
     }
     advance_token();
-    std::cout << "if statement curr_token = " << *curr_token << "\n";
     advance_token();
     Node *condition = parse_expression(Prec0);
-    if (curr_token->type != Rparen) {
+    if (curr_token.type != Rparen) {
       throw ParseError("expected )");
     }
+    std::cout << "while statement curr_token = " << curr_token << "\n";
     if (!is_next(Lbrace)) {
-      throw ParseError("expected {");
+      throw ParseError("expected { in while block");
     }
     advance_token();
     std::vector<Node *> block = parse(Rbrace);
-    if (curr_token->type != Rbrace) {
+    if (curr_token.type != Rbrace) {
       throw ParseError("expected } in while block");
     }
     advance_token();
@@ -733,7 +777,7 @@ public:
   }
 
   Node *parse_assignment_expression() {
-    Identifier ident = Identifier(curr_token->literal);
+    Identifier ident = Identifier(curr_token.literal);
     advance_token();
     advance_token();
     Node *value = parse_expression(Prec0);
@@ -742,30 +786,30 @@ public:
 
   std::vector<Node *> parse(TokenType end_token) {
     std::vector<Node *> program = {};
-    while (curr_token != nullptr && curr_token->type != end_token) {
-      switch (curr_token->type) {
+    while (curr_token.type != end_token) {
+      switch (curr_token.type) {
       case Lparen: {
         Node *node = parse_expression(Prec0);
         program.push_back(node);
         break;
       }
       case Let: {
-        std::cout << "let statement\n";
+        // std::cout << "let statement\n";
         Node *node = parse_let_statement();
         program.push_back(node);
-        std::cout << "let statement done\n";
+        // std::cout << "let statement done\n";
         continue;
         break;
       }
       case If: {
-        std::cout << "if statement\n";
+        // std::cout << "if statement\n";
         Node *node = parse_if_statement();
         program.push_back(node);
         continue;
         break;
       }
       case While: {
-        std::cout << "while statement\n";
+        // std::cout << "while statement\n";
         Node *node = parse_while_statement();
         program.push_back(node);
         continue;
@@ -777,10 +821,10 @@ public:
         break;
       }
       case Function: {
-        std::cout << "function statement\n";
+        // std::cout << "function statement\n";
         Node *node = parse_function_statement();
         program.push_back(node);
-        std::cout << "function statement done\n";
+        // std::cout << "function statement done\n";
         continue;
         break;
       }
@@ -796,7 +840,7 @@ public:
         return program;
       }
       default: {
-        if (curr_token->type == Ident) {
+        if (curr_token.type == Ident) {
           if (is_next(Lparen)) {
             Node *node = parse_call_expression();
             program.push_back(node);
@@ -814,23 +858,23 @@ public:
     return program;
   };
 
-  Token peek_token(int i) { return (*tokens)[curr_idx + i]; };
+  Token peek_token(int i) { return tokens[curr_idx + i]; };
   void advance_token() {
-    if (next_idx >= tokens->size()) {
+    if (next_idx >= tokens.size()) {
       curr_idx = next_idx;
-      curr_token = nullptr;
+      curr_token = Token{Eof, "Eof"};
     } else {
       curr_idx = next_idx;
-      curr_token = &(*tokens)[curr_idx];
+      curr_token = tokens[curr_idx];
       next_idx++;
     }
   }
 
 private:
-  std::vector<Token> *tokens;
-  Token *curr_token;
-  int curr_idx;
-  int next_idx;
+  std::vector<Token> tokens;
+  Token curr_token;
+  int curr_idx = 0;
+  int next_idx = 0;
 };
 
 Object *get_obj_from_literal(Literal *l) {
@@ -848,7 +892,7 @@ Object *get_obj_from_literal(Literal *l) {
     return new StringObject(l->value);
   }
   default: {
-    std::cout << "literal : " << l->to_string() << "\n";
+    // std::cout << "literal : " << l->to_string() << "\n";
     throw EvalError("unknown literal type" + l->to_string());
   }
   }
@@ -857,19 +901,25 @@ Object *get_obj_from_literal(Literal *l) {
 
 Object *evaluate_operator(Object *left, Object *right, Token op) {
   if (left->type() != right->type()) {
-    throw EvalError("type mismatch");
-  }
-  if (left->type() == BoolType || right->type() == BoolType) {
-    throw EvalError("cannot use bool with operator");
+    // std::cout << "WARNING: type mismatch while operating\n";
+    // throw EvalError("type mismatch while operating");
   }
   switch (op.type) {
   case Plus: {
     if (left->type() == IntType) {
       IntegerObject *left_int = (IntegerObject *)left;
+      if (right->type() == FloatType) {
+        FloatObject *right_float = (FloatObject *)right;
+        return new IntegerObject(left_int->value + right_float->value);
+      }
       IntegerObject *right_int = (IntegerObject *)right;
       return new IntegerObject(left_int->value + right_int->value);
     } else if (left->type() == FloatType) {
       FloatObject *left_float = (FloatObject *)left;
+      if (right->type() == IntType) {
+        IntegerObject *right_int = (IntegerObject *)right;
+        return new FloatObject(left_float->value + right_int->value);
+      }
       FloatObject *right_float = (FloatObject *)right;
       return new FloatObject(left_float->value + right_float->value);
     } else if (left->type() == StringType) {
@@ -957,6 +1007,9 @@ Object *evaluate_operator(Object *left, Object *right, Token op) {
     } else if (left->type() == StringType) {
       throw EvalError("invalid operation on string");
     } else {
+      bool left_bool = ((BoolObject *)left)->value;
+      bool right_bool = ((BoolObject *)right)->value;
+      return new BoolObject(left_bool != right_bool);
       throw EvalError("type mismatch");
     }
     break;
@@ -978,7 +1031,19 @@ Object *evaluate_operator(Object *left, Object *right, Token op) {
     break;
   }
   case Gt: {
-    // TODO: find a short way to do this, maybe use define?
+    if (left->type() == IntType) {
+      IntegerObject *left_int = (IntegerObject *)left;
+      IntegerObject *right_int = (IntegerObject *)right;
+      return new BoolObject(left_int->value > right_int->value);
+    } else if (left->type() == FloatType) {
+      FloatObject *left_float = (FloatObject *)left;
+      FloatObject *right_float = (FloatObject *)right;
+      return new BoolObject(left_float->value > right_float->value);
+    } else if (left->type() == StringType) {
+      throw EvalError("invalid operation on string");
+    } else {
+      throw EvalError("type mismatch");
+    }
     break;
   }
   default:
@@ -986,6 +1051,220 @@ Object *evaluate_operator(Object *left, Object *right, Token op) {
   }
   return nullptr;
 }
+
+Object *evaluate(std::vector<Node *> program, Environment *env);
+Object *evaluate_expression(Node *node, Environment *env);
+
+std::unordered_map<std::string, Color> GetRaylibColor = {
+    {"white", WHITE}, {"black", BLACK}, {"pink", PINK},
+    {"blue", BLUE},   {"green", GREEN},
+};
+
+std::unordered_map<std::string, KeyboardKey> GetRaylibKey = {
+    {"down", KEY_DOWN},
+    {"up", KEY_UP},
+    {"right", KEY_RIGHT},
+    {"left", KEY_LEFT},
+};
+
+std::unordered_map<std::string,
+                   std::function<Object *(Node *, Environment *env)>>
+    BuiltinFunctions = {
+        {"print",
+         [](Node *node, Environment *global_env) -> Object * {
+           CallExpression *callNode = (CallExpression *)node;
+           for (auto arg : callNode->args) {
+             Object *obj = evaluate_expression(arg, global_env);
+             std::cout << obj->inspect() << " ";
+           }
+           return nullptr;
+         }},
+        {"rand_int",
+         [](Node *node, Environment *global_env) -> Object * {
+           CallExpression *callNode = (CallExpression *)node;
+           for (auto arg : callNode->args) {
+             Object *obj = evaluate_expression(arg, global_env);
+             std::cout << obj->inspect() << " ";
+           }
+           IntegerObject *obj = new IntegerObject(rand());
+           return obj;
+         }},
+        {"println",
+         [](Node *node, Environment *global_env) -> Object * {
+           CallExpression *callNode = (CallExpression *)node;
+           for (auto arg : callNode->args) {
+             Object *obj = evaluate_expression(arg, global_env);
+             std::cout << obj->inspect() << " ";
+           }
+           std::cout << "\n";
+           return nullptr;
+         }},
+        {"len",
+         [](Node *node, Environment *global_env) -> Object * {
+           CallExpression *callNode = (CallExpression *)node;
+           if (callNode->args.size() != 1) {
+             throw EvalError("invalid number of arguments");
+           }
+           Object *obj = evaluate_expression(callNode->args[0], global_env);
+           if (obj->type() != StringType) {
+             throw EvalError("invalid argument type, expected string");
+           }
+           Object *ret = new IntegerObject(((StringObject *)obj)->value.size());
+           return ret;
+         }},
+        {"make_window",
+         [](Node *node, Environment *global_env) -> Object * {
+           CallExpression *callNode = (CallExpression *)node;
+           if (callNode->args.size() != 3) {
+             throw EvalError("invalid number of arguments");
+           }
+           int width = ((IntegerObject *)evaluate_expression(callNode->args[0],
+                                                             global_env))
+                           ->value;
+           int height = ((IntegerObject *)evaluate_expression(callNode->args[1],
+                                                              global_env))
+                            ->value;
+
+           std::string title = ((StringObject *)evaluate_expression(
+                                    callNode->args[2], global_env))
+                                   ->value;
+           SetTraceLogLevel(LOG_NONE);
+           InitWindow(width, height, title.c_str());
+           return nullptr;
+         }},
+        {"begin_drawing",
+         [](Node *node, Environment *global_env) -> Object * {
+           CallExpression *callNode = (CallExpression *)node;
+           if (callNode->args.size() != 0) {
+             throw EvalError("invalid number of arguments");
+           }
+           BeginDrawing();
+           return nullptr;
+         }},
+        {"end_drawing",
+         [](Node *node, Environment *global_env) -> Object * {
+           CallExpression *callNode = (CallExpression *)node;
+           if (callNode->args.size() != 0) {
+             throw EvalError("invalid number of arguments");
+           }
+           EndDrawing();
+           return nullptr;
+         }},
+        {"windows_should_close",
+         [](Node *node, Environment *global_env) -> Object * {
+           CallExpression *callNode = (CallExpression *)node;
+           if (callNode->args.size() != 0) {
+             throw EvalError("invalid number of arguments");
+           }
+           BoolObject *obj = new BoolObject(WindowShouldClose());
+           return obj;
+         }},
+        {"close_window",
+         [](Node *node, Environment *global_env) -> Object * {
+           CallExpression *callNode = (CallExpression *)node;
+           if (callNode->args.size() != 0) {
+             throw EvalError("invalid number of arguments");
+           }
+           CloseWindow();
+           return nullptr;
+         }},
+        {"wait_time",
+         [](Node *node, Environment *global_env) -> Object * {
+           CallExpression *callNode = (CallExpression *)node;
+           if (callNode->args.size() != 1) {
+             throw EvalError("invalid number of arguments");
+           }
+           float time = ((FloatObject *)evaluate_expression(callNode->args[0],
+                                                            global_env))
+                            ->value;
+           WaitTime(time / 1000.0);
+           return nullptr;
+         }},
+        {"clr_bg",
+         [](Node *node, Environment *global_env) -> Object * {
+           CallExpression *callNode = (CallExpression *)node;
+           if (callNode->args.size() != 1) {
+             throw EvalError("invalid number of arguments");
+           }
+           std::string color = ((StringObject *)evaluate_expression(
+                                    callNode->args[0], global_env))
+                                   ->value;
+           if (GetRaylibColor.find(color) == GetRaylibColor.end()) {
+             throw EvalError("invalid color");
+           }
+           ClearBackground(GetRaylibColor[color]);
+           return nullptr;
+         }},
+        {"draw_rec",
+         [](Node *node, Environment *global_env) -> Object * {
+           CallExpression *callNode = (CallExpression *)node;
+           if (callNode->args.size() != 5) {
+             throw EvalError("invalid number of arguments");
+           }
+           int posx = ((IntegerObject *)evaluate_expression(callNode->args[0],
+                                                            global_env))
+                          ->value;
+
+           int posy = ((IntegerObject *)evaluate_expression(callNode->args[1],
+                                                            global_env))
+                          ->value;
+           int width = ((IntegerObject *)evaluate_expression(callNode->args[2],
+                                                             global_env))
+                           ->value;
+           int height = ((IntegerObject *)evaluate_expression(callNode->args[3],
+                                                              global_env))
+                            ->value;
+           std::string color = ((StringObject *)evaluate_expression(
+                                    callNode->args[4], global_env))
+                                   ->value;
+           if (GetRaylibColor.find(color) == GetRaylibColor.end()) {
+             throw EvalError("invalid color");
+           }
+           DrawRectangle(posx, posy, width, height, GetRaylibColor[color]);
+           return nullptr;
+         }},
+        {"draw_circle",
+         [](Node *node, Environment *global_env) -> Object * {
+           CallExpression *callNode = (CallExpression *)node;
+           if (callNode->args.size() != 4) {
+             throw EvalError("invalid number of arguments");
+           }
+           int centerX = ((IntegerObject *)evaluate_expression(
+                              callNode->args[0], global_env))
+                             ->value;
+
+           int centerY = ((IntegerObject *)evaluate_expression(
+                              callNode->args[1], global_env))
+                             ->value;
+           int radius = ((IntegerObject *)evaluate_expression(callNode->args[2],
+                                                              global_env))
+                            ->value;
+           std::string color = ((StringObject *)evaluate_expression(
+                                    callNode->args[3], global_env))
+                                   ->value;
+           if (GetRaylibColor.find(color) == GetRaylibColor.end()) {
+             throw EvalError("invalid color");
+           }
+           DrawCircle(centerX, centerY, radius, GetRaylibColor[color]);
+           return nullptr;
+         }},
+        {"is_key_down",
+         [](Node *node, Environment *global_env) -> Object * {
+           CallExpression *callNode = (CallExpression *)node;
+           if (callNode->args.size() != 1) {
+             throw EvalError("invalid number of arguments");
+           }
+           std::string key = ((StringObject *)evaluate_expression(
+                                  callNode->args[0], global_env))
+                                 ->value;
+           if (GetRaylibKey.find(key) == GetRaylibKey.end()) {
+             throw EvalError("invalid key");
+           }
+           BoolObject *obj = new BoolObject(IsKeyDown(GetRaylibKey[key]));
+           return obj;
+         }},
+
+};
 
 Object *evaluate_expression(Node *node, Environment *env) {
   if (node->statement_type() == "BinaryExpression") {
@@ -1001,69 +1280,118 @@ Object *evaluate_expression(Node *node, Environment *env) {
       throw EvalError("undefined identifier");
     }
     return obj;
+  } else if (node->statement_type() == "CallExpression") {
+    CallExpression *callNode = (CallExpression *)node;
+    if (BuiltinFunctions.find(callNode->callee.name) !=
+        BuiltinFunctions.end()) {
+      return BuiltinFunctions[callNode->callee.name](node, env);
+    }
+    if (env->functions.find(callNode->callee.name) == env->functions.end()) {
+      throw EvalError("function " + callNode->callee.name + " not defined");
+    }
+    FunctionObject *funcObj =
+        (FunctionObject *)env->functions[callNode->callee.name];
+    if (callNode->args.size() != funcObj->params.size()) {
+      throw EvalError("invalid number of arguments");
+    }
+    int i = 0;
+    Environment *func_env = new Environment();
+    for (auto param : funcObj->params) {
+      func_env->store[param] = evaluate_expression(callNode->args[i], env);
+    }
+    return evaluate(funcObj->body, func_env);
   }
   throw EvalError("invalid initialization value");
   return nullptr;
 }
 
-class Evaluator {
-public:
-  Evaluator(std::vector<Node *> &program) : program(program) {
-    global_env = new Environment();
-  }
-
-  void evaluate(Environment *env) {
-    for (auto node : program) {
-      std::string type = node->statement_type();
-      if (type == "LetStatement") {
-        LetStatement *letNode = (LetStatement *)node;
-        std::string name = letNode->ident.name;
-        if (env->store.find(name) != env->store.end()) {
-          throw EvalError("variable already defined");
-        }
-        Object *obj = evaluate_expression(letNode->value, env);
-        env->store[name] = obj;
-      } else if (type == "AssignmentExpression") {
-        AssignmentExpression *assNode = (AssignmentExpression *)node;
-        std::string name = assNode->ident.name;
-        if (env->store.find(name) == env->store.end()) {
-          throw EvalError("variable not defined");
-        }
-        Object *obj = evaluate_expression(assNode->value, env);
-        env->store[name] = obj;
-      } else if (type == "IfStatement") {
+Object *evaluate(std::vector<Node *> program, Environment *env) {
+  for (auto node : program) {
+    std::string type = node->statement_type();
+    if (type == "LetStatement") {
+      LetStatement *letNode = (LetStatement *)node;
+      std::string name = letNode->ident.name;
+      if (env->store.find(name) != env->store.end()) {
+        throw EvalError("variable already defined");
       }
-    }
+      Object *obj = evaluate_expression(letNode->value, env);
+      env->store[name] = obj;
+    } else if (type == "AssignmentExpression") {
+      AssignmentExpression *assNode = (AssignmentExpression *)node;
+      std::string name = assNode->ident.name;
+      if (env->store.find(name) == env->store.end()) {
+        throw EvalError("variable not defined");
+      }
+      Object *obj = evaluate_expression(assNode->value, env);
+      env->store[name] = obj;
+    } else if (type == "IfStatement") {
+      IfStatement *ifNode = (IfStatement *)node;
+      // std::cout << "if statement\n";
+      if (evaluate_expression(ifNode->condition, env)->is_truthy()) {
+        evaluate(ifNode->consequent, env);
+      } else if (ifNode->alternate.size() > 0) {
+        evaluate(ifNode->alternate, env);
+      }
+    } else if (type == "FunctionStatement") {
+      FunctionStatement *funcNode = (FunctionStatement *)node;
+      std::string name = funcNode->ident.name;
+      if (env->functions.find(name) != env->functions.end()) {
+        throw EvalError("function already defined");
+      }
+      std::unordered_map<std::string, Object *> params;
+      std::vector<std::string> params_vec;
+      for (auto param : funcNode->params) {
+        params_vec.push_back(param->name);
+      }
 
-    std::cout << "-----\n";
-    for (auto ele : env->store) {
-      std::cout << ele.first << " -> " << ele.second->inspect() << "\n";
+      FunctionObject *funcObj = new FunctionObject(funcNode->block, params_vec);
+      env->functions[name] = funcObj;
+    } else if (type == "CallExpression") {
+      evaluate_expression(node, env);
+    } else if (type == "WhileStatement") {
+      WhileStatement *whileNode = (WhileStatement *)node;
+      while (evaluate_expression(whileNode->condition, env)->is_truthy()) {
+        evaluate(whileNode->block, env);
+      }
+    } else if (type == "ReturnStatement") {
+      ReturnStatement *retNode = (ReturnStatement *)node;
+      return evaluate_expression(retNode, env);
     }
   }
-  Environment *global_env;
-  std::vector<Node *> program;
-};
+  return nullptr;
+  // std::cout << "-----\n";
+  // for (auto ele : env->store) {
+  //   std::cout << ele.first << " -> " << ele.second->inspect() << "\n";
+  // }
+}
 
 int main() {
+  srand(time(0));
   std::ifstream file("test/test.ego");
   if (file.is_open()) {
     std::stringstream buffer;
     buffer << file.rdbuf();
     std::string source = buffer.str();
+
+    // std::cout << source << std::endl;
+
     Lexer lexer(source);
     std::vector<Token> tokens = lexer.lex();
-    for (auto token : tokens) {
-      std::cout << token << std::endl;
+    for (int i = 0; i < tokens.size(); ++i) {
+      std::cout << tokens[i] << std::endl;
     }
-    Parser parser(&tokens);
 
-    std::vector<Node *> program = parser.parse(Eof);
+    Parser *parser = new Parser(tokens);
 
-    Evaluator evaluator = Evaluator(program);
-    Environment *global_env = new Environment();
+    std::vector<Node *> program = parser->parse(Eof);
 
     std::cout << nodes_to_str(program) << std::endl;
-    evaluator.evaluate(global_env);
+
+    std::cout << "-----\n";
+
+    Environment *global_env = new Environment();
+
+    evaluate(program, global_env);
 
     std::ofstream out("test/test_ast.json");
     if (!out.is_open()) {
