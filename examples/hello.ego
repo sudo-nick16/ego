@@ -1,0 +1,5 @@
+func hello(name){
+    println("hello", name)
+}
+let name = "sudo_nick"
+hello(name)

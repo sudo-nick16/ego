@@ -1,5 +1,9 @@
+COMPILER=g++
+OPTIONS=-std=c++20
+LIBS=-lraylib
+
 build:
-	g++ -std=c++20 -o bin/ego ego.cpp -lraylib 
+	$(COMPILER) $(OPTIONS) -o bin/ego ego.cpp $(LIBS)
 
 all: build
 	./bin/ego

@@ -5,6 +5,7 @@
 #include <fstream>
 #include <functional>
 #include <iostream>
+#include <math.h>
 #include <raylib.h>
 #include <sstream>
 #include <string>
@@ -36,10 +37,16 @@ enum TokenType {
   While,
   String,
   Plus,
+  PlusEq,
   Minus,
+  MinusEq,
   Div,
+  DivEq,
   Mul,
+  MulEq,
+  Mod,
   Pow,
+  PowEq,
   Ident,
   Assign,
   Equal,
@@ -49,6 +56,8 @@ enum TokenType {
   Gt,
   Lte,
   Gte,
+  And,
+  Or,
   Lparen,
   Rparen,
   Lbrace,
@@ -98,9 +107,10 @@ bool is_token_type_bool(TokenType t) {
   return false;
 }
 
-static std::unordered_map<std::string, TokenType> keywords = {
-    {"let", Let},       {"if", If},     {"else", Else},   {"while", While},
-    {"return", Return}, {"true", True}, {"false", False}, {"func", Function}};
+static std::unordered_map<std::string, TokenType> Keywords = {
+    {"let", Let},     {"if", If},        {"else", Else},     {"while", While},
+    {"and", And},     {"or", Or},        {"return", Return}, {"true", True},
+    {"false", False}, {"func", Function}};
 
 class Lexer {
 public:
@@ -214,6 +224,10 @@ public:
         tokens.push_back(Token{Rbrace, "}"});
         break;
       }
+      case '%': {
+        tokens.push_back(Token{Mod, "%"});
+        break;
+      }
       case '"': {
         std::string str;
         read_char();
@@ -246,9 +260,9 @@ public:
             identifier += source[pos];
             read_char();
           }
-          if (keywords.find(identifier) != keywords.end()) {
+          if (Keywords.find(identifier) != Keywords.end()) {
             tokens.push_back(Token{
-                keywords[identifier],
+                Keywords[identifier],
                 identifier,
             });
             continue;
@@ -273,8 +287,10 @@ private:
 };
 
 bool is_binary_op(TokenType t) {
-  if (t == Plus || t == Minus || t == Div || t == Mul || t == Pow || t == Lt ||
-      t == Gt || t == Lte || t == Gte || t == Equal || t == NotEqual) {
+  if (t == Plus || t == Minus || t == Div || t == Mul || t == Pow || t == Mod ||
+      t == Lt || t == Gt || t == Lte || t == Gte || t == Equal ||
+      t == NotEqual || t == PlusEq || t == MinusEq || t == DivEq ||
+      t == MulEq || t == PowEq || t == And || t == Or) {
     return true;
   }
   return false;
@@ -337,6 +353,7 @@ public:
   virtual DataType type() = 0;
   virtual std::string inspect() = 0;
   virtual bool is_truthy() = 0;
+  template <typename VarType> VarType value();
 };
 
 class IntegerObject : public Object {
@@ -538,11 +555,13 @@ public:
 };
 
 static std::unordered_map<TokenType, OpInfo> OpInfoMap{
-    {Lt, OpInfo{Prec0, Left}},   {Lte, OpInfo{Prec0, Left}},
-    {Gt, OpInfo{Prec0, Left}},   {Gte, OpInfo{Prec0, Left}},
-    {Plus, OpInfo{Prec1, Left}}, {Minus, OpInfo{Prec1, Left}},
-    {Mul, OpInfo{Prec2, Left}},  {Div, OpInfo{Prec2, Left}},
-    {Pow, OpInfo{Prec3, Right}},
+    {Or, OpInfo{Prec0, Left}},       {And, OpInfo{Prec0, Left}},
+    {Lt, OpInfo{Prec1, Left}},       {Lte, OpInfo{Prec1, Left}},
+    {Gt, OpInfo{Prec1, Left}},       {Gte, OpInfo{Prec1, Left}},
+    {NotEqual, OpInfo{Prec1, Left}}, {Equal, OpInfo{Prec1, Left}},
+    {Plus, OpInfo{Prec2, Left}},     {Minus, OpInfo{Prec2, Left}},
+    {Mul, OpInfo{Prec3, Left}},      {Div, OpInfo{Prec3, Left}},
+    {Mod, OpInfo{Prec4, Left}},      {Pow, OpInfo{Prec4, Right}},
 };
 
 class Parser {
@@ -762,7 +781,7 @@ public:
     if (curr_token.type != Rparen) {
       throw ParseError("expected )");
     }
-    std::cout << "while statement curr_token = " << curr_token << "\n";
+    // std::cout << "while statement curr_token = " << curr_token << "\n";
     if (!is_next(Lbrace)) {
       throw ParseError("expected { in while block");
     }
@@ -899,156 +918,76 @@ Object *get_obj_from_literal(Literal *l) {
   return new StringObject(l->value);
 }
 
-Object *evaluate_operator(Object *left, Object *right, Token op) {
-  if (left->type() != right->type()) {
-    // std::cout << "WARNING: type mismatch while operating\n";
-    // throw EvalError("type mismatch while operating");
-  }
-  switch (op.type) {
+template <typename VarType>
+VarType evaluate_primary_op(VarType x, VarType y, TokenType op) {
+  switch (op) {
   case Plus: {
-    if (left->type() == IntType) {
-      IntegerObject *left_int = (IntegerObject *)left;
-      if (right->type() == FloatType) {
-        FloatObject *right_float = (FloatObject *)right;
-        return new IntegerObject(left_int->value + right_float->value);
-      }
-      IntegerObject *right_int = (IntegerObject *)right;
-      return new IntegerObject(left_int->value + right_int->value);
-    } else if (left->type() == FloatType) {
-      FloatObject *left_float = (FloatObject *)left;
-      if (right->type() == IntType) {
-        IntegerObject *right_int = (IntegerObject *)right;
-        return new FloatObject(left_float->value + right_int->value);
-      }
-      FloatObject *right_float = (FloatObject *)right;
-      return new FloatObject(left_float->value + right_float->value);
-    } else if (left->type() == StringType) {
-      StringObject *left_string = (StringObject *)left;
-      StringObject *right_string = (StringObject *)right;
-      return new StringObject(left_string->value + right_string->value);
-    } else {
-      throw EvalError("type mismatch");
-    }
-    break;
+    return x + y;
   }
   case Minus: {
-    if (left->type() == IntType) {
-      IntegerObject *left_int = (IntegerObject *)left;
-      IntegerObject *right_int = (IntegerObject *)right;
-      return new IntegerObject(left_int->value - right_int->value);
-    } else if (left->type() == FloatType) {
-      FloatObject *left_float = (FloatObject *)left;
-      FloatObject *right_float = (FloatObject *)right;
-      return new FloatObject(left_float->value - right_float->value);
-    } else if (left->type() == StringType) {
-      throw EvalError("invalid operation on string");
-    } else {
-      throw EvalError("type mismatch");
-    }
-    break;
+    return x - y;
   }
   case Mul: {
-    if (left->type() == IntType) {
-      IntegerObject *left_int = (IntegerObject *)left;
-      IntegerObject *right_int = (IntegerObject *)right;
-      return new IntegerObject(left_int->value * right_int->value);
-    } else if (left->type() == FloatType) {
-      FloatObject *left_float = (FloatObject *)left;
-      FloatObject *right_float = (FloatObject *)right;
-      return new FloatObject(left_float->value * right_float->value);
-    } else if (left->type() == StringType) {
-      throw EvalError("invalid operation on string");
-    } else {
-      throw EvalError("type mismatch");
-    }
-    break;
+    return x * y;
   }
   case Div: {
-    if (left->type() == IntType) {
-      IntegerObject *left_int = (IntegerObject *)left;
-      IntegerObject *right_int = (IntegerObject *)right;
-      return new IntegerObject(left_int->value / right_int->value);
-    } else if (left->type() == FloatType) {
-      FloatObject *left_float = (FloatObject *)left;
-      FloatObject *right_float = (FloatObject *)right;
-      return new FloatObject(left_float->value / right_float->value);
-    } else if (left->type() == StringType) {
-      throw EvalError("invalid operation on string");
-    } else {
-      throw EvalError("type mismatch");
-    }
-    break;
+    return x / y;
   }
-  case Equal: {
-    if (left->type() == IntType) {
-      IntegerObject *left_int = (IntegerObject *)left;
-      IntegerObject *right_int = (IntegerObject *)right;
-      return new BoolObject(left_int->value == right_int->value);
-    } else if (left->type() == FloatType) {
-      FloatObject *left_float = (FloatObject *)left;
-      FloatObject *right_float = (FloatObject *)right;
-      return new BoolObject(left_float->value == right_float->value);
-    } else if (left->type() == StringType) {
-      throw EvalError("invalid operation on string");
-    } else {
-      throw EvalError("type mismatch");
-    }
-    break;
+  case Mod: {
+    return (int)x % (int)y;
   }
-  case NotEqual: {
-    if (left->type() == IntType) {
-      IntegerObject *left_int = (IntegerObject *)left;
-      IntegerObject *right_int = (IntegerObject *)right;
-      return new BoolObject(left_int->value != right_int->value);
-    } else if (left->type() == FloatType) {
-      FloatObject *left_float = (FloatObject *)left;
-      FloatObject *right_float = (FloatObject *)right;
-      return new BoolObject(left_float->value != right_float->value);
-    } else if (left->type() == StringType) {
-      throw EvalError("invalid operation on string");
-    } else {
-      bool left_bool = ((BoolObject *)left)->value;
-      bool right_bool = ((BoolObject *)right)->value;
-      return new BoolObject(left_bool != right_bool);
-      throw EvalError("type mismatch");
-    }
-    break;
+  case And: {
+    return x && y;
+  }
+  case Or: {
+    return x || y;
   }
   case Lt: {
-    if (left->type() == IntType) {
-      IntegerObject *left_int = (IntegerObject *)left;
-      IntegerObject *right_int = (IntegerObject *)right;
-      return new BoolObject(left_int->value < right_int->value);
-    } else if (left->type() == FloatType) {
-      FloatObject *left_float = (FloatObject *)left;
-      FloatObject *right_float = (FloatObject *)right;
-      return new BoolObject(left_float->value < right_float->value);
-    } else if (left->type() == StringType) {
-      throw EvalError("invalid operation on string");
-    } else {
-      throw EvalError("type mismatch");
-    }
-    break;
+    return x < y;
+  }
+  case Lte: {
+    return x <= y;
   }
   case Gt: {
-    if (left->type() == IntType) {
-      IntegerObject *left_int = (IntegerObject *)left;
-      IntegerObject *right_int = (IntegerObject *)right;
-      return new BoolObject(left_int->value > right_int->value);
-    } else if (left->type() == FloatType) {
-      FloatObject *left_float = (FloatObject *)left;
-      FloatObject *right_float = (FloatObject *)right;
-      return new BoolObject(left_float->value > right_float->value);
-    } else if (left->type() == StringType) {
-      throw EvalError("invalid operation on string");
-    } else {
-      throw EvalError("type mismatch");
+    return x > y;
+  }
+  case Gte: {
+    return x >= y;
+  }
+  case Equal: {
+    return x == y;
+  }
+  case NotEqual: {
+    return x != y;
+  }
+  }
+  std::cout << x << " " << y << op << "\n";
+  throw EvalError("unknown operator");
+}
+
+Object *evaluate_operator(Object *left, Object *right, Token op) {
+  // if (left->type() != right->type()) {
+  // std::cout << "WARNING: type mismatch while operating\n";
+  // throw EvalError("type mismatch while operating");
+  // }
+  if ((left->type() == StringType || right->type() == StringType) &&
+      op.type == Plus) {
+    return new StringObject(left->inspect() + right->inspect());
+  } else if (left->type() == FloatType || right->type() == FloatType) {
+    FloatObject *left_float;
+    if (op.type == Mod) {
+      throw EvalError("cannot use % on floats");
     }
-    break;
+    return new FloatObject(evaluate_primary_op(
+        std::stof(left->inspect()), std::stof(right->inspect()), op.type));
+  } else if (left->type() == IntType || right->type() == IntType) {
+    return new IntegerObject(evaluate_primary_op(
+        std::stoi(left->inspect()), std::stoi(right->inspect()), op.type));
+  } else if (left->type() == BoolType || right->type() == BoolType) {
+    return new IntegerObject(evaluate_primary_op(
+        (int)left->is_truthy(), (int)right->is_truthy(), op.type));
   }
-  default:
-    throw EvalError("invalid expression");
-  }
+  throw EvalError("unknown operator");
   return nullptr;
 }
 
@@ -1061,11 +1000,15 @@ std::unordered_map<std::string, Color> GetRaylibColor = {
 };
 
 std::unordered_map<std::string, KeyboardKey> GetRaylibKey = {
-    {"down", KEY_DOWN},
-    {"up", KEY_UP},
-    {"right", KEY_RIGHT},
-    {"left", KEY_LEFT},
+    {"down", KEY_DOWN}, {"up", KEY_UP},       {"right", KEY_RIGHT},
+    {"left", KEY_LEFT}, {"space", KEY_SPACE},
 };
+
+std::unordered_map<std::string, TraceLogLevel> GetRaylibLogLevel = {
+    {"log_all", LOG_ALL},         {"log_trace", LOG_TRACE},
+    {"log_debug", LOG_DEBUG},     {"log_info", LOG_INFO},
+    {"log_warning", LOG_WARNING}, {"log_error", LOG_ERROR},
+    {"log_fatal", LOG_FATAL},     {"log_none", LOG_NONE}};
 
 std::unordered_map<std::string,
                    std::function<Object *(Node *, Environment *env)>>
@@ -1073,9 +1016,10 @@ std::unordered_map<std::string,
         {"print",
          [](Node *node, Environment *global_env) -> Object * {
            CallExpression *callNode = (CallExpression *)node;
-           for (auto arg : callNode->args) {
-             Object *obj = evaluate_expression(arg, global_env);
-             std::cout << obj->inspect() << " ";
+           for (int i = 0; i < callNode->args.size(); ++i) {
+             Object *obj = evaluate_expression(callNode->args[i], global_env);
+             std::cout << obj->inspect()
+                       << ((i == callNode->args.size() - 1) ? "" : " ");
            }
            return nullptr;
          }},
@@ -1092,9 +1036,10 @@ std::unordered_map<std::string,
         {"println",
          [](Node *node, Environment *global_env) -> Object * {
            CallExpression *callNode = (CallExpression *)node;
-           for (auto arg : callNode->args) {
-             Object *obj = evaluate_expression(arg, global_env);
-             std::cout << obj->inspect() << " ";
+           for (int i = 0; i < callNode->args.size(); ++i) {
+             Object *obj = evaluate_expression(callNode->args[i], global_env);
+             std::cout << obj->inspect()
+                       << ((i == callNode->args.size() - 1) ? "" : " ");
            }
            std::cout << "\n";
            return nullptr;
@@ -1110,6 +1055,40 @@ std::unordered_map<std::string,
              throw EvalError("invalid argument type, expected string");
            }
            Object *ret = new IntegerObject(((StringObject *)obj)->value.size());
+           return ret;
+         }},
+        {"ceil",
+         [](Node *node, Environment *global_env) -> Object * {
+           CallExpression *callNode = (CallExpression *)node;
+           if (callNode->args.size() != 1) {
+             throw EvalError("invalid number of arguments");
+           }
+           Object *obj = evaluate_expression(callNode->args[0], global_env);
+           Object *ret;
+           if (obj->type() == FloatType) {
+             ret = new IntegerObject((int)ceil(((FloatObject *)obj)->value));
+           } else if (obj->type() == IntType) {
+             ret = new IntegerObject(((IntegerObject *)obj)->value);
+           } else {
+             throw EvalError("invalid argument type, expected float or int");
+           }
+           return ret;
+         }},
+        {"floor",
+         [](Node *node, Environment *global_env) -> Object * {
+           CallExpression *callNode = (CallExpression *)node;
+           if (callNode->args.size() != 1) {
+             throw EvalError("invalid number of arguments");
+           }
+           Object *obj = evaluate_expression(callNode->args[0], global_env);
+           Object *ret;
+           if (obj->type() == FloatType) {
+             ret = new IntegerObject((int)floor(((FloatObject *)obj)->value));
+           } else if (obj->type() == IntType) {
+             ret = new IntegerObject(((IntegerObject *)obj)->value);
+           } else {
+             throw EvalError("invalid argument type, expected float or int");
+           }
            return ret;
          }},
         {"make_window",
@@ -1128,7 +1107,6 @@ std::unordered_map<std::string,
            std::string title = ((StringObject *)evaluate_expression(
                                     callNode->args[2], global_env))
                                    ->value;
-           SetTraceLogLevel(LOG_NONE);
            InitWindow(width, height, title.c_str());
            return nullptr;
          }},
@@ -1168,6 +1146,18 @@ std::unordered_map<std::string,
            CloseWindow();
            return nullptr;
          }},
+        {"to_int",
+         [](Node *node, Environment *global_env) -> Object * {
+           CallExpression *callNode = (CallExpression *)node;
+           if (callNode->args.size() != 1) {
+             throw EvalError("invalid number of arguments");
+           }
+           float val = ((FloatObject *)evaluate_expression(callNode->args[0],
+                                                           global_env))
+                           ->value;
+           IntegerObject *obj = new IntegerObject(floor(val));
+           return obj;
+         }},
         {"wait_time",
          [](Node *node, Environment *global_env) -> Object * {
            CallExpression *callNode = (CallExpression *)node;
@@ -1201,18 +1191,18 @@ std::unordered_map<std::string,
            if (callNode->args.size() != 5) {
              throw EvalError("invalid number of arguments");
            }
-           int posx = ((IntegerObject *)evaluate_expression(callNode->args[0],
-                                                            global_env))
+           int posx = (int)((IntegerObject *)evaluate_expression(
+                                callNode->args[0], global_env))
                           ->value;
 
-           int posy = ((IntegerObject *)evaluate_expression(callNode->args[1],
-                                                            global_env))
+           int posy = (int)((IntegerObject *)evaluate_expression(
+                                callNode->args[1], global_env))
                           ->value;
-           int width = ((IntegerObject *)evaluate_expression(callNode->args[2],
-                                                             global_env))
+           int width = (int)((IntegerObject *)evaluate_expression(
+                                 callNode->args[2], global_env))
                            ->value;
-           int height = ((IntegerObject *)evaluate_expression(callNode->args[3],
-                                                              global_env))
+           int height = (int)((IntegerObject *)evaluate_expression(
+                                  callNode->args[3], global_env))
                             ->value;
            std::string color = ((StringObject *)evaluate_expression(
                                     callNode->args[4], global_env))
@@ -1221,6 +1211,34 @@ std::unordered_map<std::string,
              throw EvalError("invalid color");
            }
            DrawRectangle(posx, posy, width, height, GetRaylibColor[color]);
+           return nullptr;
+         }},
+        {"draw_text",
+         [](Node *node, Environment *global_env) -> Object * {
+           CallExpression *callNode = (CallExpression *)node;
+           if (callNode->args.size() != 5) {
+             throw EvalError("invalid number of arguments");
+           }
+           std::string text = ((StringObject *)evaluate_expression(
+                                   callNode->args[0], global_env))
+                                  ->value;
+           int posx = (int)((IntegerObject *)evaluate_expression(
+                                callNode->args[1], global_env))
+                          ->value;
+
+           int posy = (int)((IntegerObject *)evaluate_expression(
+                                callNode->args[2], global_env))
+                          ->value;
+           int font_size = (int)((IntegerObject *)evaluate_expression(
+                                     callNode->args[3], global_env))
+                               ->value;
+           std::string color = ((StringObject *)evaluate_expression(
+                                    callNode->args[4], global_env))
+                                   ->value;
+           if (GetRaylibColor.find(color) == GetRaylibColor.end()) {
+             throw EvalError("invalid color");
+           }
+           DrawText(text.c_str(), posx, posy, font_size, GetRaylibColor[color]);
            return nullptr;
          }},
         {"draw_circle",
@@ -1236,9 +1254,9 @@ std::unordered_map<std::string,
            int centerY = ((IntegerObject *)evaluate_expression(
                               callNode->args[1], global_env))
                              ->value;
-           int radius = ((IntegerObject *)evaluate_expression(callNode->args[2],
-                                                              global_env))
-                            ->value;
+           float radius = (float)((FloatObject *)evaluate_expression(
+                                      callNode->args[2], global_env))
+                              ->value;
            std::string color = ((StringObject *)evaluate_expression(
                                     callNode->args[3], global_env))
                                    ->value;
@@ -1263,6 +1281,22 @@ std::unordered_map<std::string,
            BoolObject *obj = new BoolObject(IsKeyDown(GetRaylibKey[key]));
            return obj;
          }},
+        {"set_log_level",
+         [](Node *node, Environment *global_env) -> Object * {
+           SetTraceLogLevel(LOG_NONE);
+           CallExpression *callNode = (CallExpression *)node;
+           if (callNode->args.size() != 1) {
+             throw EvalError("invalid number of arguments");
+           }
+           std::string key = ((StringObject *)evaluate_expression(
+                                  callNode->args[0], global_env))
+                                 ->value;
+           if (GetRaylibLogLevel.find(key) == GetRaylibLogLevel.end()) {
+             throw EvalError("invalid key");
+           }
+           SetTraceLogLevel(GetRaylibLogLevel[key]);
+           return nullptr;
+         }},
 
 };
 
@@ -1277,7 +1311,7 @@ Object *evaluate_expression(Node *node, Environment *env) {
   } else if (node->statement_type() == "Identifier") {
     Object *obj = env->get_identifier(((Identifier *)node)->name);
     if (obj == nullptr) {
-      throw EvalError("undefined identifier");
+      throw EvalError("undefined identifier: " + ((Identifier *)node)->name);
     }
     return obj;
   } else if (node->statement_type() == "CallExpression") {
@@ -1312,7 +1346,7 @@ Object *evaluate(std::vector<Node *> program, Environment *env) {
       LetStatement *letNode = (LetStatement *)node;
       std::string name = letNode->ident.name;
       if (env->store.find(name) != env->store.end()) {
-        throw EvalError("variable already defined");
+        throw EvalError("variable already defined: " + name);
       }
       Object *obj = evaluate_expression(letNode->value, env);
       env->store[name] = obj;
@@ -1365,9 +1399,14 @@ Object *evaluate(std::vector<Node *> program, Environment *env) {
   // }
 }
 
-int main() {
+int main(int argc, char **argv) {
   srand(time(0));
-  std::ifstream file("test/test.ego");
+  if (argc == 1) {
+    std::cout << "Usage: ego <filename>" << std::endl;
+    return 0;
+  }
+  std::string filepath = argv[1];
+  std::ifstream file(filepath);
   if (file.is_open()) {
     std::stringstream buffer;
     buffer << file.rdbuf();
@@ -1377,28 +1416,22 @@ int main() {
 
     Lexer lexer(source);
     std::vector<Token> tokens = lexer.lex();
-    for (int i = 0; i < tokens.size(); ++i) {
-      std::cout << tokens[i] << std::endl;
-    }
+
+    // for (int i = 0; i < tokens.size(); ++i) {
+    //   std::cout << tokens[i] << std::endl;
+    // }
 
     Parser *parser = new Parser(tokens);
 
     std::vector<Node *> program = parser->parse(Eof);
 
-    std::cout << nodes_to_str(program) << std::endl;
+    // std::cout << nodes_to_str(program) << std::endl;
 
-    std::cout << "-----\n";
+    // std::cout << "-----\n";
 
     Environment *global_env = new Environment();
 
     evaluate(program, global_env);
-
-    std::ofstream out("test/test_ast.json");
-    if (!out.is_open()) {
-      std::cout << "Unable to open json file" << std::endl;
-    }
-    out << nodes_to_str(program);
-    out.close();
 
     // for (auto node : program) {
     //   std::cout << node->to_string() << std::endl;
