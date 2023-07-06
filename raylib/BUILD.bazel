@@ -1,0 +1,6 @@
+cc_import(
+  name = "raylib",
+  hdrs = glob(["*.h"]),
+  static_library = "libraylib.a",
+  visibility = ["//visibility:public"],
+)
