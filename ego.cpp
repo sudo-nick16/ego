@@ -1,6 +1,3 @@
-#include <cctype>
-#include <cerrno>
-#include <cstdlib>
 #include <exception>
 #include <fstream>
 #include <functional>
@@ -732,7 +729,7 @@ public:
       advance_token();
       params.push_back(new Identifier(curr_token.literal));
       if (!is_next(Comma) && !is_next(Rparen)) {
-        throw ParseError("expected , or )");
+        throw ParseError("expected , or ) in function " + ident.name);
       }
       advance_token();
     }
@@ -763,7 +760,7 @@ public:
       } else if (curr_token.type == Rparen) {
         break;
       } else {
-        throw ParseError("expected , or )");
+        throw ParseError("expected , or ) in function call " + callee.name);
       }
     }
     advance_token();
@@ -1158,6 +1155,18 @@ std::unordered_map<std::string,
            IntegerObject *obj = new IntegerObject(floor(val));
            return obj;
          }},
+        {"to_str",
+         [](Node *node, Environment *global_env) -> Object * {
+           CallExpression *callNode = (CallExpression *)node;
+           if (callNode->args.size() != 1) {
+             throw EvalError("invalid number of arguments");
+           }
+           std::string s =
+               evaluate_expression(callNode->args[0], global_env)->inspect();
+
+           StringObject *obj = new StringObject(s);
+           return obj;
+         }},
         {"wait_time",
          [](Node *node, Environment *global_env) -> Object * {
            CallExpression *callNode = (CallExpression *)node;
@@ -1335,7 +1344,7 @@ Object *evaluate_expression(Node *node, Environment *env) {
     }
     return evaluate(funcObj->body, func_env);
   }
-  throw EvalError("invalid initialization value");
+  throw EvalError("invalid initialization value " + node->statement_type());
   return nullptr;
 }
 
@@ -1389,7 +1398,7 @@ Object *evaluate(std::vector<Node *> program, Environment *env) {
       }
     } else if (type == "ReturnStatement") {
       ReturnStatement *retNode = (ReturnStatement *)node;
-      return evaluate_expression(retNode, env);
+      return evaluate_expression(retNode->value, env);
     }
   }
   return nullptr;

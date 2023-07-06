@@ -1,6 +1,6 @@
 print("ping pong")
 
-let winW = 500
+let winW = 900
 let winH = 500
 
 let paddleW = 20
@@ -10,14 +10,15 @@ let lPaddleY = (winW/2)-(paddleH/2)
 let rPaddleY = (winW/2)-(paddleH/2)
 
 let leftPad = 10
-let rightPad = 500 - paddleW - leftPad
+let rightPad = winW - paddleW - leftPad
 
 let ballX = winW/2
 let ballY = winH/2
 let ballR = 20.0
+let deltaSpeed = 0.01
 
 
-let speedX = 0.5
+let speedX = 0.2
 let speedY = 0.2
 
 
@@ -37,7 +38,7 @@ while(windows_should_close() != true){
         if(is_key_down("space")){
             ballY = winH/2
             ballX = winW/2
-            speedX = 0.5
+            speedX = 0.2
             speedY = 0.3
             win = false
             gameOver = false
@@ -69,7 +70,7 @@ while(windows_should_close() != true){
 
         if (ballX + ballR >= rightPad) {
             if (ballY > rPaddleY and ballY < (rPaddleY + paddleH)){
-                speedX = speedX + 0.03
+                speedX = speedX + deltaSpeed
                 speedX = speedX * -1
             } else {
                 gameOver = true
@@ -77,9 +78,9 @@ while(windows_should_close() != true){
             }
         }
 
-        if (ballX - ballR <= leftPad) {
+        if (ballX - ballR <= leftPad + paddleW / 2) {
             if (ballY > lPaddleY and ballY < (lPaddleY + paddleH)){
-                speedX = speedX + 0.03
+                speedX = speedX + deltaSpeed
                 speedX = speedX * -1
             } else {
                 gameOver = true
