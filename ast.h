@@ -75,6 +75,16 @@ public:
   bool value;
 };
 
+class ArrayObject : public Object {
+public:
+  ArrayObject();
+  ArrayObject(std::vector<Object *> ele);
+  DataType type();
+  std::string inspect();
+  bool is_truthy();
+  std::vector<Object *> elements;
+};
+
 class FunctionObject {
 public:
   FunctionObject();
@@ -176,6 +186,25 @@ public:
   std::string type = "AssignmentExpression";
   Identifier ident;
   Node *value;
+};
+
+class ArrayExpression : public Node {
+public:
+  ArrayExpression(std::vector<Node *> elements);
+  std::string statement_type();
+  std::string to_string();
+  std::string type = "ArrayExpression";
+  std::vector<Node *> elements;
+};
+
+class MemberExpression : public Node {
+public:
+  MemberExpression(Node *object, Node *property);
+  std::string statement_type();
+  std::string to_string();
+  std::string type = "MemberExpression";
+  Node *object;
+  Node *property;
 };
 
 #endif // !ast_h

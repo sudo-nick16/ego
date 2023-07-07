@@ -6,7 +6,6 @@ EvalError::EvalError(std::string err)
     : error_msg("error while evaluating: " + err) {}
 const char *EvalError::what() const noexcept { return error_msg.c_str(); }
 
-
 Object *evaluate_operator(Object *left, Object *right, Token op) {
   // if (left->type() != right->type()) {
   // std::cout << "WARNING: type mismatch while operating\n";
@@ -32,7 +31,6 @@ Object *evaluate_operator(Object *left, Object *right, Token op) {
   throw EvalError("unknown operator");
   return nullptr;
 }
-
 
 Object *evaluate_expression(Node *node, Environment *env) {
   if (node->statement_type() == "BinaryExpression") {
@@ -72,6 +70,22 @@ Object *evaluate_expression(Node *node, Environment *env) {
       func_env->store[param] = evaluate_expression(callNode->args[i], env);
     }
     return evaluate(funcObj->body, func_env);
+  } else if (node->statement_type() == "MemberExpression") {
+    MemberExpression *memNode = (MemberExpression *)node;
+    std::string object = ((Identifier *)memNode->object)->name;
+    if (env->store.find(object) == env->store.end()) {
+      throw EvalError("object not defined");
+    }
+    ArrayObject *value = (ArrayObject *)env->store[object];
+    Object *prop = evaluate_expression(memNode->property, env);
+    if (prop->type() != IntType) {
+      throw EvalError("invalid property type");
+    }
+    int index = ((IntegerObject *)prop)->value;
+    if (index < 0 || index >= value->elements.size()) {
+      throw EvalError("index out of bounds");
+    }
+    return value->elements[index];
   }
   throw EvalError("invalid initialization value " + node->statement_type());
   return nullptr;
@@ -85,6 +99,15 @@ Object *evaluate(std::vector<Node *> program, Environment *env) {
       std::string name = letNode->ident.name;
       if (env->store.find(name) != env->store.end()) {
         throw EvalError("variable already defined: " + name);
+      }
+      if (letNode->value->statement_type() == "ArrayExpression") {
+        ArrayExpression *arrNode = (ArrayExpression *)letNode->value;
+        std::vector<Object *> arr;
+        for (auto elem : arrNode->elements) {
+          arr.push_back(evaluate_expression(elem, env));
+        }
+        env->store[name] = new ArrayObject(arr);
+        continue;
       }
       Object *obj = evaluate_expression(letNode->value, env);
       env->store[name] = obj;
@@ -128,6 +151,8 @@ Object *evaluate(std::vector<Node *> program, Environment *env) {
     } else if (type == "ReturnStatement") {
       ReturnStatement *retNode = (ReturnStatement *)node;
       return evaluate_expression(retNode->value, env);
+    } else if (type == "MemberExpression") {
+      return evaluate_expression(node, env);
     }
   }
   return nullptr;

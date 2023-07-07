@@ -1,8 +1,8 @@
-#include "lexer.h"
 #include "parser.h"
 #include "ast.h"
 #include "eval.h"
 #include "common.h"
+#include "utils.h"
 
 int main(int argc, char **argv) {
   srand(time(0));

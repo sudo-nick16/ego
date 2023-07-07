@@ -29,6 +29,10 @@ public:
 
   Node *parse_assignment_expression();
 
+  Node *parse_array_expression();
+
+  Node *parse_member_expression();
+
   std::vector<Node *> parse(TokenType end_token);
 
   Token peek_token(int i);

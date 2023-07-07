@@ -37,6 +37,8 @@ enum TokenType {
   Or,
   Lparen,
   Rparen,
+  Lbracket,
+  Rbracket,
   Lbrace,
   Rbrace,
   Semicolon,

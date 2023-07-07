@@ -1,6 +1,7 @@
 #include "builtins.h"
 #include "common.h"
 #include "eval.h"
+#include "utils.h"
 
 const std::unordered_map<std::string, Color> GetRaylibColor = {
     {"white", WHITE}, {"black", BLACK}, {"pink", PINK},
@@ -25,6 +26,11 @@ const std::unordered_map<std::string,
          [](Node *node, Environment *global_env) -> Object * {
            CallExpression *callNode = (CallExpression *)node;
            for (int i = 0; i < callNode->args.size(); ++i) {
+             if (callNode->args[i]->statement_type() == "ArrayExpression") {
+               std::cout << nodes_to_str(
+                   ((ArrayExpression *)callNode->args[i])->elements);
+               continue;
+             }
              Object *obj = evaluate_expression(callNode->args[i], global_env);
              std::cout << obj->inspect()
                        << ((i == callNode->args.size() - 1) ? "" : " ");
@@ -45,6 +51,11 @@ const std::unordered_map<std::string,
          [](Node *node, Environment *global_env) -> Object * {
            CallExpression *callNode = (CallExpression *)node;
            for (int i = 0; i < callNode->args.size(); ++i) {
+             if (callNode->args[i]->statement_type() == "ArrayExpression") {
+               std::cout << nodes_to_str(
+                   ((ArrayExpression *)callNode->args[i])->elements);
+               continue;
+             }
              Object *obj = evaluate_expression(callNode->args[i], global_env);
              std::cout << obj->inspect()
                        << ((i == callNode->args.size() - 1) ? "" : " ");

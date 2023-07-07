@@ -125,3 +125,33 @@ std::string AssignmentExpression::to_string() {
          "\",\n\"identifier\": " + ident.to_string() +
          ",\n\"value\": " + value->to_string() + "\n}";
 }
+
+ArrayExpression::ArrayExpression(std::vector<Node *> ele) : elements(ele) {}
+std::string ArrayExpression::statement_type() { return type; };
+std::string ArrayExpression::to_string() {
+  return "{\n\"type\": \"" + type +
+         "\",\n\"elements\": " + nodes_to_str(elements) + "\n}";
+}
+
+ArrayObject::ArrayObject(std::vector<Object *> ele) : elements(ele) {}
+bool ArrayObject::is_truthy() { return elements.size() != 0; }
+DataType ArrayObject::type() { return ArrayType; }
+std::string ArrayObject::inspect() {
+  std::string str = "[";
+  for (int i = 0; i < elements.size(); i++) {
+    str += elements[i]->inspect();
+    if (i != elements.size() - 1) {
+      str += ", ";
+    }
+  }
+  str += "]";
+  return str;
+}
+
+MemberExpression::MemberExpression(Node *obj, Node *prop)
+    : object(obj), property(prop){};
+std::string MemberExpression::statement_type() { return type; };
+std::string MemberExpression::to_string() {
+  return "{\n\"type\": \"" + type + "\",\n\"object\": " + object->to_string() +
+         ",\n\"property\": " + property->to_string() + "\n}";
+};

@@ -23,6 +23,14 @@ std::vector<Token> Lexer::lex() {
       tokens.push_back(Token{Semicolon, ";"});
       break;
     }
+    case '[': {
+      tokens.push_back(Token{Lbracket, "["});
+      break;
+    }
+    case ']': {
+      tokens.push_back(Token{Rbracket, "]"});
+      break;
+    }
     case ',': {
       tokens.push_back(Token{Comma, ","});
       break;

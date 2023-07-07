@@ -1,7 +1,8 @@
 #include "parser.h"
 #include "utils.h"
 
-ParseError::ParseError(std::string err) : error_msg("error while parsing: " + err) {}
+ParseError::ParseError(std::string err)
+    : error_msg("error while parsing: " + err) {}
 const char *ParseError::what() const noexcept { return error_msg.c_str(); }
 
 std::unordered_map<TokenType, OpInfo> OpInfoMap = {
@@ -47,6 +48,9 @@ Node *Parser::parse_primary() {
       if (is_next(Lparen)) {
         return parse_call_expression();
       }
+      if (is_next(Lbracket)) {
+        return parse_member_expression();
+      }
       Node *node = new Identifier(curr_token.literal);
       advance_token();
       return node;
@@ -60,6 +64,9 @@ Node *Parser::parse_primary() {
       Node *node = new Literal(curr_token.literal, BoolType);
       advance_token();
       return node;
+    }
+    if (curr_token.type == Lbracket) {
+      return parse_array_expression();
     }
     throw ParseError(
         "invalid token, expected a literal or identifier but got " +
@@ -108,6 +115,10 @@ Node *Parser::parse_let_statement() {
   }
   advance_token();
   advance_token();
+  if (curr_token.type == Lbracket) {
+    Node *value = parse_array_expression();
+    return new LetStatement(ident, value);
+  }
   Node *value = parse_expression(Prec0);
   return new LetStatement(ident, value);
 };
@@ -210,6 +221,7 @@ Node *Parser::parse_call_expression() {
     } else if (curr_token.type == Rparen) {
       break;
     } else {
+      // std::cout << "curr_token = " << curr_token << "\n";
       throw ParseError("expected , or ) in function call " + callee.name);
     }
   }
@@ -246,6 +258,10 @@ Node *Parser::parse_assignment_expression() {
   Identifier ident = Identifier(curr_token.literal);
   advance_token();
   advance_token();
+  if (curr_token.type == Lbracket) {
+    Node *value = parse_array_expression();
+    return new AssignmentExpression(ident, value);
+  }
   Node *value = parse_expression(Prec0);
   return new AssignmentExpression(ident, value);
 }
@@ -315,6 +331,9 @@ std::vector<Node *> Parser::parse(TokenType end_token) {
           Node *node = parse_assignment_expression();
           program.push_back(node);
           continue;
+        } else if (is_next(Lbracket)) {
+          Node *node = parse_member_expression();
+          program.push_back(node);
         }
       }
     }
@@ -334,4 +353,34 @@ void Parser::advance_token() {
     curr_token = tokens[curr_idx];
     next_idx++;
   }
+}
+
+Node *Parser::parse_array_expression() {
+  std::vector<Node *> elements = {};
+  advance_token();
+  while (curr_token.type != Rbracket) {
+    Node *node = parse_expression(Prec0);
+    elements.push_back(node);
+    if (curr_token.type == Comma) {
+      advance_token();
+    } else if (curr_token.type == Rbracket) {
+      break;
+    } else {
+      throw ParseError("expected , or ] in array expression");
+    }
+  }
+  Node *node = new ArrayExpression(elements);
+  return node;
+}
+
+Node *Parser::parse_member_expression() {
+  std::vector<Node *> elements = {};
+  Identifier *object = new Identifier(curr_token.literal);
+  advance_token();
+  advance_token();
+  Node *property = parse_expression(Prec0);
+  advance_token();
+  // std::cout << "after parsing member = " << curr_token << "\n";
+  Node *node = new MemberExpression(object, property);
+  return node;
 }
