@@ -9,6 +9,7 @@ enum DataType {
   FloatType,
   StringType,
   BoolType,
+  ArrayType,
 };
 
 class Lexer {
