@@ -7,7 +7,7 @@
 int main(int argc, char **argv) {
   srand(time(0));
   if (argc == 1) {
-    std::cout << "Usage: ego <filename>" << std::endl;
+    std::cout << "Usage: whimsia <filename>" << std::endl;
     return 0;
   }
   std::string filepath = argv[1];

@@ -54,6 +54,9 @@ VarType evaluate_primary_op(VarType x, VarType y, TokenType op) {
   case NotEqual: {
     return x != y;
   }
+  default: {
+    throw EvalError("unknown operator");
+  }
   }
   std::cout << x << " " << y << op << "\n";
   throw EvalError("unknown operator");

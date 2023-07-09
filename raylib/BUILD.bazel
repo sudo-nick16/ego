@@ -1,6 +1,13 @@
+cc_library(
+  name = "raylib_hdrs",
+  hdrs = glob(["*.h"]),
+  visibility = ["//visibility:public"],
+)
+
 cc_import(
   name = "raylib",
-  hdrs = glob(["*.h"]),
+  hdrs = ["raylib_hdrs"],
   static_library = "libraylib.a",
   visibility = ["//visibility:public"],
 )
+
