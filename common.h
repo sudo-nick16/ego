@@ -4,12 +4,13 @@
 #include <string>
 #include <vector>
 #include <unordered_map>
-#include <raylib.h>
 #include <functional>
 #include <iostream>
 #include <math.h>
 #include <exception>
 #include <sstream>
 #include <fstream>
+#include <time.h>
+#include "raylib/raylib.h"
 
 #endif // !common_h

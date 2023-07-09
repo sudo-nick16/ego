@@ -1,4 +1,4 @@
-# ego
+# whimsia
 Interpreter written in cpp.
 
 Future plans:

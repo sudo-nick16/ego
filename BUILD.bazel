@@ -1,14 +1,16 @@
 cc_library(
-    name = "ego_lib",
+    name = "whimsia_lib",
     srcs = ["//:srcs"],
     hdrs = ["//:hdrs"],
+    deps = ["//raylib:raylib_hdrs"],
+    copts = ["-std=c++20"], 
 )
 
 cc_binary(
-    name = "ego",
+    name = "whimsia",
     srcs = ["main.cpp"],
     copts = ["-std=c++20"],
-    deps = ["//:ego_lib", "//raylib"],
+    deps = ["//:whimsia_lib", "//raylib:raylib"],
 )
 
 filegroup(
@@ -19,6 +21,6 @@ filegroup(
 
 filegroup(
     name = "srcs",
-    srcs = glob(["*.cpp"], exclude=["ego.cpp"]),
+    srcs = glob(["*.cpp"]),
     visibility = ["//visibility:public"],
 )
